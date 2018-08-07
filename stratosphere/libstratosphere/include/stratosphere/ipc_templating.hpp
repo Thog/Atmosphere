@@ -23,7 +23,7 @@ struct InBuffer : InBufferBase {
     size_t num_elements;
     BufferType type;
     static const BufferType expected_type = e_t;
-    
+
     InBuffer(void *b, size_t n, BufferType t) : buffer((T *)b), num_elements(n/sizeof(T)), type(t) { }
 };
 
@@ -47,6 +47,17 @@ struct InPointer : IpcBufferBase {
     size_t num_elements;
     
     InPointer(void *p, size_t n) : pointer((T *)p), num_elements(n/sizeof(T)) { }
+};
+
+/* Represents an A + X descriptor. */
+struct InSmartBufferBase : InBufferBase {};
+
+template <typename T>
+struct InSmartBuffer : InSmartBufferBase {
+    T *buffer;
+    size_t num_elements;
+
+    InSmartBuffer(void *b, size_t n) : buffer((T *)b), num_elements(n/sizeof(T)) { }
 };
 
 /* Represents a C descriptor. */
@@ -176,7 +187,7 @@ struct num_inbuffers_in_arguments {
 
 template <typename T>
 struct is_ipc_inpointer {
-    static const size_t value = (is_specialization_of<T, InPointer>::value) ? 1 : 0;
+    static const size_t value = (is_specialization_of<T, InPointer>::value || is_specialization_of<T, InSmartBuffer>::value) ? 1 : 0;
 };
 
 template <typename ...Args>
@@ -219,7 +230,22 @@ T GetValueFromIpcParsedCommand(IpcParsedCommand& r, IpcCommand& out_c, u8 *point
     const size_t old_rawdata_index = cur_rawdata_index;
     const size_t old_c_size_offset = cur_c_size_offset;
     const size_t old_pointer_buffer_offset = pointer_buffer_offset;
-    if constexpr (std::is_base_of<InBufferBase, T>::value) {
+
+    if constexpr (std::is_base_of<InSmartBufferBase, T>::value) {
+        if (r.Buffers[a_index] == NULL || r.BufferSizes[a_index] == 0)
+        {
+            const T& value{r.Statics[x_index], r.StaticSizes[x_index]};
+            ++x_index;
+            return value;
+        }
+        else
+        {
+            const T& value = T(r.Buffers[a_index], r.BufferSizes[a_index]);
+            ++a_index;
+            return value;
+        }
+    }
+    else if constexpr (std::is_base_of<InBufferBase, T>::value) {
         const T& value = T(r.Buffers[a_index], r.BufferSizes[a_index], r.BufferTypes[a_index]);
         ++a_index;
         return value;
@@ -259,7 +285,12 @@ T GetValueFromIpcParsedCommand(IpcParsedCommand& r, IpcCommand& out_c, u8 *point
 template <typename T>
 bool ValidateIpcParsedCommandArgument(IpcParsedCommand& r, size_t& cur_rawdata_index, size_t& cur_c_size_offset, size_t& a_index, size_t& b_index, size_t& x_index, size_t& c_index, size_t& h_index, size_t& total_c_size) {
     const size_t old_c_size_offset = cur_c_size_offset;
+
     if constexpr (std::is_base_of<InBufferBase, T>::value) {
+        // TODO: check this
+        return true;
+    }
+    else if constexpr (std::is_base_of<InBufferBase, T>::value) {
         return r.Buffers[a_index] != NULL && r.BufferDirections[a_index] == BufferDirection_Send && r.BufferTypes[a_index++] == T::expected_type;
     } else if constexpr (std::is_base_of<OutBufferBase, T>::value) {
         return r.Buffers[b_index] != NULL && r.BufferDirections[b_index] == BufferDirection_Recv && r.BufferTypes[b_index++] == T::expected_type;
@@ -293,23 +324,23 @@ struct Validator<std::tuple<Args...>> {
     
 	Result operator()() {
         if (r.RawSize < size_in_raw_data_with_out_pointers_for_arguments<Args... >::value) {
-            return 0xF601;
+            return 1;
         }
                         
         if (r.NumBuffers != num_inoutbuffers_in_arguments<Args... >::value) {
-            return 0xF601;
+            return 2;
         }
         
         if (r.NumStatics != num_inpointers_in_arguments<Args... >::value) {
-            return 0xF601;
+            return 3;
         }
 
         if (r.NumStaticsOut != num_outpointers_in_arguments<Args... >::value) {
-            return 0xF601;
+            return 4;
         }
         
         if (r.NumHandles != num_handles_in_arguments<Args... >::value) {
-            return 0xF601;
+            return 5;
         }
         
         constexpr size_t num_pids = num_pids_in_arguments<Args... >::value;
@@ -317,7 +348,7 @@ struct Validator<std::tuple<Args...>> {
         static_assert(num_pids <= 1, "Number of PID descriptors in IpcCommandImpl cannot be > 1");
         
         if ((r.HasPid && num_pids == 0) || (!r.HasPid && num_pids)) {
-            return 0xF601;
+            return 6;
         }
         
         if (((u32 *)r.Raw)[0] != SFCI_MAGIC) {
@@ -330,11 +361,11 @@ struct Validator<std::tuple<Args...>> {
         size_t total_c_size = 0;
                 
         if (!(ValidateIpcParsedCommandArgument<Args>(r, cur_rawdata_index, cur_c_size_offset, a_index, b_index, x_index, c_index, h_index, total_c_size) && ...)) {
-            return 0xF601;
+            return 7;
         }
         
         if (total_c_size > pointer_buffer_size) {
-            return 0xF601;
+            return 8;
         }
 
         return 0;
@@ -504,7 +535,7 @@ Result WrapIpcCommandImpl(Class *this_ptr, IpcParsedCommand& r, IpcCommand &out_
     Result rc = Validator<InArgsWithoutThis>{r, pointer_buffer_size}();
         
     if (R_FAILED(rc)) {
-        return 0xF601;
+        return rc;
     }
 
     auto args = Decoder<OutArgs, InArgsWithoutThis>::Decode(r, out_command, pointer_buffer);    

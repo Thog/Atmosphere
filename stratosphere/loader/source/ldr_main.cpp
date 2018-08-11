@@ -24,6 +24,7 @@ extern "C" {
     void __appInit(void);
     void __appExit(void);
 
+    Result fsDevMountPartition(const char *device_name, u32 partition_id);
 }
 
 
@@ -74,6 +75,11 @@ void __appInit(void) {
     if (R_FAILED(splGetConfig((SplConfigItem)65000, &exosphere_cfg))) {
         //fatalSimple(0xCAFE << 4 | 0xFF);
         /* TODO: Does Loader need to know about target firmware/master key revision? If so, extract from exosphere_cfg. */
+    }
+
+    rc = fsDevMountPartition("user", 30);
+    if (R_FAILED(rc))  {
+        fatalSimple(0xCAFE << 4 | 5);
     }
     
     //splExit();

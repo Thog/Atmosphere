@@ -27,9 +27,18 @@ FILE *NpdmUtils::OpenNpdmFromSdCard(u64 title_id) {
     return fopen(g_npdm_path, "rb");
 }
 
+FILE *NpdmUtils::OpenNpdmFromUser(u64 title_id) {
+    std::fill(g_npdm_path, g_npdm_path + FS_MAX_PATH, 0);
+    snprintf(g_npdm_path, FS_MAX_PATH, "user:/atmosphere/titles/%016lx/exefs/main.npdm", title_id);
+    return fopen(g_npdm_path, "rb");
+}
+
 
 FILE *NpdmUtils::OpenNpdm(u64 title_id) {
     FILE *f_out = OpenNpdmFromSdCard(title_id);
+    if (f_out == NULL) {
+        f_out = OpenNpdmFromUser(title_id);
+    }
     if (f_out != NULL) {
         return f_out;
     }

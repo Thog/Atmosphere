@@ -20,6 +20,13 @@ FILE *NsoUtils::OpenNsoFromExeFS(unsigned int index) {
     return fopen(g_nso_path, "rb");
 }
 
+FILE *NsoUtils::OpenNsoFromUser(unsigned int index, u64 title_id) {
+    std::fill(g_nso_path, g_nso_path + FS_MAX_PATH, 0);
+    snprintf(g_nso_path, FS_MAX_PATH, "user:/atmosphere/titles/%016lx/exefs/%s", title_id, NsoUtils::GetNsoFileName(index));
+    return fopen(g_nso_path, "rb");
+}
+
+
 FILE *NsoUtils::OpenNsoFromSdCard(unsigned int index, u64 title_id) {  
     std::fill(g_nso_path, g_nso_path + FS_MAX_PATH, 0);
     snprintf(g_nso_path, FS_MAX_PATH, "sdmc:/atmosphere/titles/%016lx/exefs/%s", title_id, NsoUtils::GetNsoFileName(index));
@@ -33,12 +40,23 @@ bool NsoUtils::CheckNsoStubbed(unsigned int index, u64 title_id) {
     bool ret = (f != NULL);
     if (ret) {
         fclose(f);
+    } else {
+        memset(g_nso_path, 0, FS_MAX_PATH);
+        snprintf(g_nso_path, FS_MAX_PATH, "user:/atmosphere/titles/%016lx/exefs/%s.stub", title_id, NsoUtils::GetNsoFileName(index));
+        FILE *f = fopen(g_nso_path, "rb");
+        ret = (f != NULL);
+        if (ret) {
+            fclose(f);
+        }
     }
     return ret;
 }
 
 FILE *NsoUtils::OpenNso(unsigned int index, u64 title_id) {
     FILE *f_out = OpenNsoFromSdCard(index, title_id);
+    if (f_out == NULL) {
+        f_out = OpenNsoFromUser(index, title_id);
+    }
     if (f_out != NULL) {
         return f_out;
     } else if (CheckNsoStubbed(index, title_id)) {
@@ -285,7 +303,8 @@ Result NsoUtils::LoadNsosIntoProcessMemory(Handle process_h, u64 title_id, NsoLo
             std::fill(map_base + bss_base, map_base + bss_base + bss_size, 0);
             
             /* Apply patches to loaded module. */
-            PatchUtils::ApplyPatches(&g_nso_headers[i], map_base, bss_base);
+            PatchUtils::ApplyPatches("user", &g_nso_headers[i], map_base, bss_base);
+            PatchUtils::ApplyPatches("sdmc", &g_nso_headers[i], map_base, bss_base);
             
             nso_map.Close();
             
